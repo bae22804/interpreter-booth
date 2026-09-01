@@ -167,8 +167,28 @@
   .interim{color:var(--text-muted); font-style:italic;}
   .placeholder{color:var(--text-muted); font-size:14px;}
   .pending{color:var(--text-muted);}
+  .seg.bm-hl-line{
+    background:var(--live-soft); border-left:3px solid var(--live);
+    padding:4px 8px; margin-left:-8px; margin-right:-8px; border-radius:0 8px 8px 0;
+  }
+  mark.bm-hl{
+    background:var(--live-soft); color:var(--live); padding:0 3px; border-radius:4px; font-weight:600;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
 
   /* results */
+  .results-head{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:14px;}
+  .results-head h2{font-size:16px; margin:0; font-weight:700;}
+  .results-actions{display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
+  .hl-legend{display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--text-muted);}
+  .hl-legend .hl-dot{width:9px; height:9px; border-radius:50%; background:var(--live); display:inline-block;}
+  .pdf-btn{
+    background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+    border-radius:999px; padding:9px 16px; font-size:13.5px; font-weight:600; cursor:pointer;
+    min-height:40px; font-family:inherit;
+  }
+  .pdf-btn:hover{border-color:var(--accent); color:var(--accent-strong);}
+
   .record{
     background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
     box-shadow:var(--shadow-sm); margin-bottom:14px; overflow:hidden;
@@ -186,8 +206,12 @@
     background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md);
     padding:13px 15px; box-shadow:var(--shadow-sm); display:grid;
     grid-template-columns:60px 1fr auto; gap:13px; align-items:center;
+    position:relative; overflow:hidden;
   }
   @media (max-width:640px){ .cue-card{grid-template-columns:1fr;} }
+  .cue-progress{ position:absolute; left:0; right:0; bottom:0; height:3px; }
+  .cue-progress-bar{ height:100%; width:0%; background:var(--live); transition:width 3s linear; }
+  .cue-card:not(.pending) .cue-progress{ display:none; }
   .cue-time{
     font-size:12px; font-weight:600; color:var(--accent-strong); background:var(--accent-soft);
     border-radius:8px; padding:6px 0; text-align:center;
@@ -209,6 +233,17 @@
     opacity:0; pointer-events:none; transition:opacity .25s, transform .25s; max-width:90vw; text-align:center;
   }
   .toast.show{opacity:1; transform:translateX(-50%) translateY(-6px);}
+
+  #printSheet{ display:none; }
+  #printSheet h1{ font-size:20px; margin:0 0 4px; }
+  #printSheet .meta{ color:#555; font-size:12px; margin:0 0 6px; }
+  #printSheet h2{ font-size:14px; margin:22px 0 8px; border-bottom:1px solid #ccc; padding-bottom:4px; }
+  #printSheet .ptext{ font-size:13px; line-height:1.75; white-space:pre-wrap; }
+  @media print{
+    .stage, .toast{ display:none !important; }
+    #printSheet{ display:block !important; padding:24px; color:#111; background:#fff; }
+    #printSheet mark.bm-hl{ background:#fbdcd6 !important; color:#b8291a !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  }
 </style>
 </head>
 <body>
@@ -245,6 +280,13 @@
   </div>
 
   <div id="results" style="display:none;">
+    <div class="results-head">
+      <h2>세션 기록</h2>
+      <div class="results-actions">
+        <span class="hl-legend" id="hlLegend" style="display:none;"><span class="hl-dot"></span>빨간색 = 북마크한 구간</span>
+        <button class="pdf-btn" id="pdfBtn">PDF로 저장</button>
+      </div>
+    </div>
     <div class="record">
       <h3>영어 전문</h3>
       <div class="body" id="fullEn"></div>
@@ -267,6 +309,7 @@
   </div>
 </div>
 
+<div id="printSheet"></div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -285,6 +328,9 @@
   const bmList = document.getElementById('bmList');
   const toast = document.getElementById('toast');
   const unsupportedWarn = document.getElementById('unsupportedWarn');
+  const hlLegend = document.getElementById('hlLegend');
+  const pdfBtn = document.getElementById('pdfBtn');
+  const printSheet = document.getElementById('printSheet');
 
   if(!SpeechRecognition){
     unsupportedWarn.style.display = 'block';
@@ -301,6 +347,8 @@
   let translationChain = Promise.resolve();
   let interimEl = null;
   let bmId = 0;
+  let bookmarkedSegIds = new Set();
+  let pendingBookmarks = [];
 
   function showToast(msg){
     toast.textContent = msg;
@@ -341,6 +389,46 @@
     return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
+  function markSegBookmarked(seg){
+    if(bookmarkedSegIds.has(seg.id)) return;
+    bookmarkedSegIds.add(seg.id);
+    const enEl = document.getElementById('en-seg-' + seg.id);
+    const koEl = document.getElementById('ko-seg-' + seg.id);
+    if(enEl) enEl.classList.add('bm-hl-line');
+    if(koEl) koEl.classList.add('bm-hl-line');
+  }
+
+  function buildHighlightedHtml(list, key){
+    const parts = list.map(s=>{
+      const t = escapeHtml(s[key] || '');
+      if(!t) return '';
+      return bookmarkedSegIds.has(s.id) ? '<mark class="bm-hl">' + t + '</mark>' : t;
+    }).filter(Boolean);
+    return parts.join(' ');
+  }
+
+  function refreshBookmark(bm){
+    const related = findSegmentsInRange(bm.start, bm.end);
+    related.forEach(markSegBookmarked);
+
+    const enParts = related.map(s=>s.en);
+    const enText = enParts.length ? enParts.join(' ') : (bm.closed ? '(해당 구간에 인식된 텍스트 없음)' : '아직 음성 인식 중…');
+
+    const koParts = related.filter(s=>s.ko).map(s=>s.ko);
+    const hasPendingKo = related.some(s=>s.ko === null);
+    let koText;
+    if(koParts.length){
+      koText = koParts.join(' ') + (hasPendingKo ? ' …' : '');
+    } else {
+      koText = hasPendingKo ? '번역 중…' : (bm.closed ? '(해당 구간에 번역된 텍스트 없음)' : '아직 음성 인식 중…');
+    }
+
+    const textBox = bm.cardEl && bm.cardEl.querySelector('.cue-text');
+    if(textBox){
+      textBox.innerHTML = '<div class="en">' + escapeHtml(enText) + '</div><div class="ko">' + escapeHtml(koText) + '</div>';
+    }
+  }
+
   function appendFinalSegment(text){
     const t = Date.now() - sessionStart;
     const id = ++segId;
@@ -363,12 +451,15 @@
     koPanel.appendChild(koDiv);
     koPanel.scrollTop = koPanel.scrollHeight;
 
+    if(pendingBookmarks.length) pendingBookmarks.forEach(refreshBookmark);
+
     translationChain = translationChain.then(async ()=>{
       const ko = await translateText(text, 'ko');
       seg.ko = ko;
       const el = document.getElementById('ko-seg-' + id);
       if(el) el.innerHTML = '<span class="t mono">' + fmtTime(t) + '</span>' + escapeHtml(ko);
       koPanel.scrollTop = koPanel.scrollHeight;
+      if(pendingBookmarks.length) pendingBookmarks.forEach(refreshBookmark);
     });
   }
 
@@ -434,9 +525,11 @@
     setupRecognition();
     isRecording = true;
     sessionStart = Date.now();
-    segId = 0; segments = []; translationChain = Promise.resolve();
+    segments = []; translationChain = Promise.resolve();
+    bookmarkedSegIds = new Set(); pendingBookmarks = [];
     enPanel.innerHTML = ''; koPanel.innerHTML = '';
     resultsBox.style.display = 'none';
+    hlLegend.style.display = 'none';
 
     toggleBtn.innerHTML = '<span class="dot"></span>번역 종료';
     toggleBtn.classList.add('live');
@@ -465,20 +558,34 @@
 
     await translationChain;
 
-    const fullEn = segments.map(s=>s.en).join(' ');
-    const fullKo = segments.map(s=>s.ko || '').join(' ');
-    fullEnEl.textContent = fullEn || '(인식된 음성이 없습니다)';
-    fullKoEl.textContent = fullKo || '(번역된 내용이 없습니다)';
+    const fullEnPlain = segments.map(s=>s.en).join(' ');
+    const fullKoPlain = segments.map(s=>s.ko || '').join(' ');
+    const fullEnHtml = buildHighlightedHtml(segments, 'en');
+    const fullKoHtml = buildHighlightedHtml(segments, 'ko');
+    fullEnEl.innerHTML = fullEnHtml || '(인식된 음성이 없습니다)';
+    fullKoEl.innerHTML = fullKoHtml || '(번역된 내용이 없습니다)';
+    hlLegend.style.display = bookmarkedSegIds.size ? 'inline-flex' : 'none';
     resultsBox.style.display = 'block';
     summaryKoEl.textContent = '요약 생성 중…';
 
-    const summary = await buildSummary(fullEn);
+    const summary = await buildSummary(fullEnPlain);
     summaryKoEl.textContent = summary || '(요약할 내용이 부족합니다)';
+
+    const dateStr = new Date().toLocaleString('ko-KR');
+    printSheet.innerHTML =
+      '<h1>통역 부스 — 세션 기록</h1>' +
+      '<p class="meta">생성 시각: ' + escapeHtml(dateStr) + '</p>' +
+      (bookmarkedSegIds.size ? '<p class="meta">빨간색으로 표시된 부분은 북마크한 구간입니다.</p>' : '') +
+      '<h2>영어 전문</h2><div class="ptext">' + (fullEnHtml || '(인식된 음성이 없습니다)') + '</div>' +
+      '<h2>한국어 번역 전문</h2><div class="ptext">' + (fullKoHtml || '(번역된 내용이 없습니다)') + '</div>' +
+      '<h2>한글 요약</h2><div class="ptext">' + escapeHtml(summary || '(요약할 내용이 부족합니다)') + '</div>';
   }
 
   toggleBtn.addEventListener('click', ()=>{
     if(isRecording) stopSession(); else startSession();
   });
+
+  pdfBtn.addEventListener('click', ()=>{ window.print(); });
 
   const STOPWORDS = new Set(['the','a','an','is','are','was','were','be','been','being','to','of','and','in','on','for','with','at','by','from','as','that','this','it','its','i','you','he','she','we','they','them','his','her','their','our','your','so','but','or','if','then','than','which','who','whom','what','when','where','why','how','not','no','do','does','did','have','has','had','will','would','can','could','should','just','about','into','up','out','over','under','again','also','very','really','um','uh']);
 
@@ -533,25 +640,36 @@
     return segments.filter(s => s.t >= fromMs - 1800 && s.t <= toMs);
   }
 
-  bookmarkBtn.addEventListener('click', async ()=>{
+  bookmarkBtn.addEventListener('click', ()=>{
     if(!isRecording || !micStream) return;
     bookmarkBtn.classList.remove('flash'); void bookmarkBtn.offsetWidth; bookmarkBtn.classList.add('flash');
-    showToast('북마크 저장 중… (3초 녹음)');
+    showToast('북마크 지정됨 · 3초간 녹음합니다');
 
     const nowMs = Date.now() - sessionStart;
     const id = ++bmId;
+    const bm = {id, start: nowMs, end: nowMs + 3000, closed:false, cardEl:null};
 
     const emptyMsg = bmList.querySelector('.cue-empty');
     if(emptyMsg) emptyMsg.remove();
 
     const card = document.createElement('div');
-    card.className = 'cue-card';
+    card.className = 'cue-card pending';
     card.id = 'bm-' + id;
     card.innerHTML =
       '<div class="cue-time mono">' + fmtTime(nowMs) + '</div>' +
-      '<div class="cue-text"><div class="cue-empty">녹음 중…</div></div>' +
-      '<div class="cue-audio"></div>';
+      '<div class="cue-text"></div>' +
+      '<div class="cue-audio"></div>' +
+      '<div class="cue-progress"><div class="cue-progress-bar"></div></div>';
     bmList.prepend(card);
+    bm.cardEl = card;
+
+    // show whatever's already been recognized immediately, then keep it live for 3s
+    pendingBookmarks.push(bm);
+    refreshBookmark(bm);
+    requestAnimationFrame(()=>{
+      const bar = card.querySelector('.cue-progress-bar');
+      if(bar) bar.style.width = '100%';
+    });
 
     let chunks = [];
     let recorder;
@@ -559,10 +677,12 @@
       recorder = new MediaRecorder(micStream);
     }catch(e){
       card.querySelector('.cue-text').innerHTML = '<div class="cue-empty">녹음을 시작할 수 없습니다.</div>';
+      pendingBookmarks = pendingBookmarks.filter(b=>b.id !== bm.id);
+      card.classList.remove('pending');
       return;
     }
     recorder.ondataavailable = (e)=>{ if(e.data && e.data.size > 0) chunks.push(e.data); };
-    recorder.onstop = async ()=>{
+    recorder.onstop = ()=>{
       const blob = new Blob(chunks, {type: recorder.mimeType || 'audio/webm'});
       const url = URL.createObjectURL(blob);
       const audioWrap = card.querySelector('.cue-audio');
@@ -574,12 +694,10 @@
         }
       });
 
-      const related = findSegmentsInRange(nowMs, nowMs + 3000);
-      const enText = related.map(s=>s.en).join(' ') || '(해당 구간에 인식된 텍스트 없음)';
-      const koText = related.map(s=>s.ko || '').join(' ') || '(해당 구간에 번역된 텍스트 없음)';
-      card.querySelector('.cue-text').innerHTML =
-        '<div class="en">' + escapeHtml(enText) + '</div>' +
-        '<div class="ko">' + escapeHtml(koText) + '</div>';
+      bm.closed = true;
+      pendingBookmarks = pendingBookmarks.filter(b=>b.id !== bm.id);
+      card.classList.remove('pending');
+      refreshBookmark(bm);
     };
 
     recorder.start();
