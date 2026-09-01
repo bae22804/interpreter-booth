@@ -1,0 +1,16 @@
+{
+  "name": "통역 부스",
+  "short_name": "통역부스",
+  "description": "영어 음성을 실시간으로 한국어로 번역하고 북마크로 저장하는 앱",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F6F2EA",
+  "theme_color": "#AD7620",
+  "lang": "ko",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

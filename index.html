@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>통역 부스</title>
+<meta name="description" content="영어 음성을 실시간으로 한국어로 번역하고, 3초 북마크로 저장하는 통역 부스.">
+<meta name="theme-color" content="#AD7620">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="통역부스">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,500;1,500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+  :root{
+    --bg:#F6F2EA;
+    --surface:#FFFFFF;
+    --surface-2:#FBF8F2;
+    --border:#E6DFD1;
+    --text:#221D15;
+    --text-muted:#8A8072;
+    --accent:#AD7620;
+    --accent-strong:#84590F;
+    --accent-soft:#F1E2C3;
+    --accent-ink:#3E2C0C;
+    --live:#C1432B;
+    --live-soft:#F7DFD7;
+    --en-tint:#F3E2D8;
+    --en-accent:#A0553A;
+    --ko-tint:#E1ECE2;
+    --ko-accent:#3C7854;
+    --shadow-sm:0 1px 2px rgba(34,29,21,.05);
+    --shadow-md:0 10px 28px rgba(34,29,21,.09);
+    --radius-lg:18px;
+    --radius-md:12px;
+    --radius-sm:9px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#17140F;
+      --surface:#211C15;
+      --surface-2:#251F17;
+      --border:#3A3325;
+      --text:#F2ECDF;
+      --text-muted:#A79A85;
+      --accent:#E3A94E;
+      --accent-strong:#F2C271;
+      --accent-soft:rgba(227,169,78,.16);
+      --accent-ink:#2B1F0C;
+      --live:#FF7A5C;
+      --live-soft:rgba(255,122,92,.16);
+      --en-tint:rgba(214,120,84,.14);
+      --en-accent:#E39575;
+      --ko-tint:rgba(94,181,132,.14);
+      --ko-accent:#8CD2A6;
+      --shadow-sm:0 1px 2px rgba(0,0,0,.3);
+      --shadow-md:0 14px 32px rgba(0,0,0,.45);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#17140F;
+    --surface:#211C15;
+    --surface-2:#251F17;
+    --border:#3A3325;
+    --text:#F2ECDF;
+    --text-muted:#A79A85;
+    --accent:#E3A94E;
+    --accent-strong:#F2C271;
+    --accent-soft:rgba(227,169,78,.16);
+    --accent-ink:#2B1F0C;
+    --live:#FF7A5C;
+    --live-soft:rgba(255,122,92,.16);
+    --en-tint:rgba(214,120,84,.14);
+    --en-accent:#E39575;
+    --ko-tint:rgba(94,181,132,.14);
+    --ko-accent:#8CD2A6;
+    --shadow-sm:0 1px 2px rgba(0,0,0,.3);
+    --shadow-md:0 14px 32px rgba(0,0,0,.45);
+  }
+
+  *{box-sizing:border-box;}
+  html{background:var(--bg);}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:"IBM Plex Sans KR","IBM Plex Sans",sans-serif;
+    line-height:1.5; -webkit-tap-highlight-color:transparent;
+  }
+  .mono{font-family:"IBM Plex Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums;}
+  .stage{max-width:1040px; margin:0 auto; padding:24px 16px 90px;}
+
+  header{margin-bottom:20px;}
+  .eyebrow{
+    font-family:"Fraunces",serif; font-style:italic; font-weight:500;
+    font-size:13px; letter-spacing:.06em; color:var(--accent-strong); margin:0 0 6px;
+    text-transform:uppercase;
+  }
+  h1{font-size:clamp(24px,5vw,30px); margin:0 0 6px; font-weight:700; text-wrap:balance;}
+  .sub{color:var(--text-muted); font-size:14px; max-width:60ch;}
+
+  .warn{
+    background:var(--live-soft); border:1px solid color-mix(in srgb, var(--live) 35%, transparent);
+    color:var(--live); border-radius:var(--radius-sm); padding:11px 14px; font-size:13px;
+    margin-bottom:16px; display:none; font-weight:500;
+  }
+
+  /* transport console */
+  .console{
+    background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
+    box-shadow:var(--shadow-sm); padding:14px; margin:18px 0 20px;
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  }
+  .transport-btn{
+    border:none; border-radius:999px; padding:13px 24px; font-size:15px; font-weight:600;
+    cursor:pointer; display:inline-flex; align-items:center; gap:9px; min-height:48px;
+    background:var(--accent); color:var(--accent-ink); transition:background .15s, transform .08s;
+    font-family:inherit;
+  }
+  .transport-btn:hover{background:var(--accent-strong);}
+  .transport-btn:active{transform:scale(.97);}
+  .transport-btn.live{background:var(--live); color:#fff;}
+  .transport-btn:disabled{opacity:.5; cursor:not-allowed;}
+  .transport-btn .dot{
+    width:9px; height:9px; border-radius:50%; background:currentColor; opacity:.55;
+  }
+  .transport-btn.live .dot{animation:pulse 1.1s infinite;}
+  @media (prefers-reduced-motion: reduce){ .transport-btn.live .dot{animation:none;} }
+  @keyframes pulse{0%{opacity:.55;}50%{opacity:1;}100%{opacity:.55;}}
+
+  .timer{
+    font-size:15px; color:var(--text-muted); display:flex; align-items:center; gap:6px;
+  }
+  .timer .val{color:var(--text); font-weight:600; font-size:16px;}
+
+  .cue-btn{
+    margin-left:auto; display:flex; align-items:center; gap:8px; min-height:48px;
+    background:var(--accent-soft); border:1px solid transparent; color:var(--accent-strong);
+    border-radius:999px; padding:11px 18px; font-size:14px; font-weight:600; cursor:pointer;
+    font-family:inherit;
+  }
+  .cue-btn:hover:not(:disabled){border-color:var(--accent);}
+  .cue-btn:disabled{opacity:.4; cursor:not-allowed;}
+  .cue-btn svg{width:19px; height:19px; flex-shrink:0;}
+  .cue-btn.flash{animation:flash .5s;}
+  @keyframes flash{0%{background:var(--accent);}100%{background:var(--accent-soft);}}
+
+  /* caption stage */
+  .captions{display:grid; grid-template-columns:1fr; gap:14px; margin-bottom:22px;}
+  @media (min-width:760px){ .captions{grid-template-columns:1fr 1fr;} }
+  .cap-card{
+    background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
+    box-shadow:var(--shadow-sm); overflow:hidden; display:flex; flex-direction:column;
+  }
+  .cap-head{
+    padding:11px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px;
+    font-family:"Fraunces",serif; font-style:italic; font-weight:500; font-size:13px;
+    letter-spacing:.04em; text-transform:uppercase; color:var(--text-muted);
+  }
+  .cap-card.en .cap-head{background:var(--en-tint); color:var(--en-accent);}
+  .cap-card.ko .cap-head{background:var(--ko-tint); color:var(--ko-accent);}
+  .cap-body{padding:16px; height:260px; overflow-y:auto; font-size:15.5px;}
+  .seg{margin-bottom:11px;}
+  .seg .t{font-size:11px; color:var(--text-muted); margin-right:7px;}
+  .interim{color:var(--text-muted); font-style:italic;}
+  .placeholder{color:var(--text-muted); font-size:14px;}
+  .pending{color:var(--text-muted);}
+
+  /* results */
+  .record{
+    background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
+    box-shadow:var(--shadow-sm); margin-bottom:14px; overflow:hidden;
+  }
+  .record h3{
+    margin:0; padding:12px 16px; font-size:14px; font-weight:600;
+    border-bottom:1px solid var(--border); background:var(--surface-2);
+  }
+  .record .body{padding:16px; font-size:14.5px; white-space:pre-wrap;}
+
+  .cues{margin-top:28px;}
+  .cues h3{font-size:16px; margin:0 0 12px; font-weight:700;}
+  .cue-list{display:flex; flex-direction:column; gap:10px;}
+  .cue-card{
+    background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md);
+    padding:13px 15px; box-shadow:var(--shadow-sm); display:grid;
+    grid-template-columns:60px 1fr auto; gap:13px; align-items:center;
+  }
+  @media (max-width:640px){ .cue-card{grid-template-columns:1fr;} }
+  .cue-time{
+    font-size:12px; font-weight:600; color:var(--accent-strong); background:var(--accent-soft);
+    border-radius:8px; padding:6px 0; text-align:center;
+  }
+  .cue-text .en{font-size:13px; color:var(--text-muted); margin-bottom:3px;}
+  .cue-text .ko{font-size:14.5px; font-weight:500;}
+  .cue-audio{display:flex; align-items:center; gap:8px;}
+  .cue-audio audio{height:34px; max-width:190px;}
+  .cue-del{
+    background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:17px;
+    padding:6px; min-width:32px; min-height:32px;
+  }
+  .cue-del:hover{color:var(--live);}
+  .cue-empty{color:var(--text-muted); font-size:13.5px;}
+
+  .toast{
+    position:fixed; bottom:22px; left:50%; transform:translateX(-50%);
+    background:var(--text); color:var(--bg); padding:11px 18px; border-radius:10px; font-size:13px;
+    opacity:0; pointer-events:none; transition:opacity .25s, transform .25s; max-width:90vw; text-align:center;
+  }
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(-6px);}
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <header>
+    <p class="eyebrow">Live Interpreting</p>
+    <h1>통역 부스</h1>
+    <p class="sub">영어 음성을 실시간으로 인식해 한국어로 옮깁니다. 스마트폰·태블릿 모두 지원하며, Chrome 계열 브라우저에서 가장 안정적으로 작동합니다.</p>
+  </header>
+
+  <div class="warn" id="unsupportedWarn">
+    이 브라우저는 음성 인식을 지원하지 않습니다. Chrome 또는 Edge에서 열어주세요. (iOS는 Chrome 앱 권장)
+  </div>
+
+  <div class="console">
+    <button class="transport-btn" id="toggleBtn"><span class="dot"></span>번역 시작</button>
+    <div class="timer"><span id="statusText">대기 중</span><span class="val mono" id="timer" style="display:none;">00:00</span></div>
+    <button class="cue-btn" id="bookmarkBtn" disabled title="지금부터 3초간 북마크 저장">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 2a2 2 0 0 0-2 2v18l8-5.333L20 22V4a2 2 0 0 0-2-2H6z"/></svg>
+      북마크
+    </button>
+  </div>
+
+  <div class="captions">
+    <div class="cap-card en">
+      <div class="cap-head">EN · English</div>
+      <div class="cap-body" id="enPanel"><div class="placeholder">번역 시작을 누르고 영어로 말해보세요…</div></div>
+    </div>
+    <div class="cap-card ko">
+      <div class="cap-head">KO · 한국어</div>
+      <div class="cap-body" id="koPanel"><div class="placeholder">번역 결과가 여기에 표시됩니다…</div></div>
+    </div>
+  </div>
+
+  <div id="results" style="display:none;">
+    <div class="record">
+      <h3>영어 전문</h3>
+      <div class="body" id="fullEn"></div>
+    </div>
+    <div class="record">
+      <h3>한국어 번역 전문</h3>
+      <div class="body" id="fullKo"></div>
+    </div>
+    <div class="record">
+      <h3>한글 요약</h3>
+      <div class="body" id="summaryKo">요약 생성 중…</div>
+    </div>
+  </div>
+
+  <div class="cues">
+    <h3>북마크 큐</h3>
+    <div class="cue-list" id="bmList">
+      <div class="cue-empty">저장된 북마크가 없습니다. 녹음 중 북마크 버튼을 눌러보세요.</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const toggleBtn = document.getElementById('toggleBtn');
+  const bookmarkBtn = document.getElementById('bookmarkBtn');
+  const statusText = document.getElementById('statusText');
+  const timerEl = document.getElementById('timer');
+  const enPanel = document.getElementById('enPanel');
+  const koPanel = document.getElementById('koPanel');
+  const resultsBox = document.getElementById('results');
+  const fullEnEl = document.getElementById('fullEn');
+  const fullKoEl = document.getElementById('fullKo');
+  const summaryKoEl = document.getElementById('summaryKo');
+  const bmList = document.getElementById('bmList');
+  const toast = document.getElementById('toast');
+  const unsupportedWarn = document.getElementById('unsupportedWarn');
+
+  if(!SpeechRecognition){
+    unsupportedWarn.style.display = 'block';
+    toggleBtn.disabled = true;
+  }
+
+  let recognition = null;
+  let micStream = null;
+  let isRecording = false;
+  let sessionStart = 0;
+  let timerInterval = null;
+  let segId = 0;
+  let segments = [];
+  let translationChain = Promise.resolve();
+  let interimEl = null;
+  let bmId = 0;
+
+  function showToast(msg){
+    toast.textContent = msg;
+    toast.classList.add('show');
+    setTimeout(()=>toast.classList.remove('show'), 1600);
+  }
+
+  function fmtTime(ms){
+    const s = Math.floor(ms/1000);
+    const mm = String(Math.floor(s/60)).padStart(2,'0');
+    const ss = String(s%60).padStart(2,'0');
+    return mm+':'+ss;
+  }
+
+  function clearPlaceholder(panel){
+    const ph = panel.querySelector('.placeholder');
+    if(ph) ph.remove();
+  }
+
+  async function translateText(text, targetLang){
+    targetLang = targetLang || 'ko';
+    if(!text || !text.trim()) return '';
+    try{
+      const url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(text) + '&langpair=en|' + targetLang;
+      const res = await fetch(url);
+      const data = await res.json();
+      if(data && data.responseData && data.responseData.translatedText){
+        return data.responseData.translatedText;
+      }
+      return '(번역 실패)';
+    }catch(e){
+      console.error('translate error', e);
+      return '(번역 실패: 네트워크 오류)';
+    }
+  }
+
+  function escapeHtml(s){
+    return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function appendFinalSegment(text){
+    const t = Date.now() - sessionStart;
+    const id = ++segId;
+    const seg = {id, t, en: text, ko: null};
+    segments.push(seg);
+
+    clearPlaceholder(enPanel);
+    const enDiv = document.createElement('div');
+    enDiv.className = 'seg';
+    enDiv.id = 'en-seg-' + id;
+    enDiv.innerHTML = '<span class="t mono">' + fmtTime(t) + '</span>' + escapeHtml(text);
+    enPanel.appendChild(enDiv);
+    enPanel.scrollTop = enPanel.scrollHeight;
+
+    clearPlaceholder(koPanel);
+    const koDiv = document.createElement('div');
+    koDiv.className = 'seg';
+    koDiv.id = 'ko-seg-' + id;
+    koDiv.innerHTML = '<span class="t mono">' + fmtTime(t) + '</span><span class="pending">번역 중…</span>';
+    koPanel.appendChild(koDiv);
+    koPanel.scrollTop = koPanel.scrollHeight;
+
+    translationChain = translationChain.then(async ()=>{
+      const ko = await translateText(text, 'ko');
+      seg.ko = ko;
+      const el = document.getElementById('ko-seg-' + id);
+      if(el) el.innerHTML = '<span class="t mono">' + fmtTime(t) + '</span>' + escapeHtml(ko);
+      koPanel.scrollTop = koPanel.scrollHeight;
+    });
+  }
+
+  function updateInterim(text){
+    clearPlaceholder(enPanel);
+    if(!interimEl){
+      interimEl = document.createElement('div');
+      interimEl.className = 'seg interim';
+      enPanel.appendChild(interimEl);
+    }
+    interimEl.textContent = text;
+    enPanel.scrollTop = enPanel.scrollHeight;
+  }
+
+  function clearInterim(){
+    if(interimEl){ interimEl.remove(); interimEl = null; }
+  }
+
+  function setupRecognition(){
+    recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    recognition.onresult = (event)=>{
+      let interim = '';
+      for(let i = event.resultIndex; i < event.results.length; i++){
+        const res = event.results[i];
+        if(res.isFinal){
+          clearInterim();
+          appendFinalSegment(res[0].transcript.trim());
+        } else {
+          interim += res[0].transcript;
+        }
+      }
+      if(interim) updateInterim(interim);
+    };
+
+    recognition.onerror = (e)=>{
+      console.warn('speech recognition error', e.error);
+      if(e.error === 'no-speech' || e.error === 'audio-capture'){ return; }
+      if(e.error === 'not-allowed'){
+        showToast('마이크 권한이 필요합니다.');
+        stopSession();
+      }
+    };
+
+    recognition.onend = ()=>{
+      if(isRecording){
+        try{ recognition.start(); }catch(e){}
+      }
+    };
+  }
+
+  async function startSession(){
+    if(!SpeechRecognition) return;
+    try{
+      micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    }catch(e){
+      showToast('마이크 접근이 거부되었습니다.');
+      return;
+    }
+    setupRecognition();
+    isRecording = true;
+    sessionStart = Date.now();
+    segId = 0; segments = []; translationChain = Promise.resolve();
+    enPanel.innerHTML = ''; koPanel.innerHTML = '';
+    resultsBox.style.display = 'none';
+
+    toggleBtn.innerHTML = '<span class="dot"></span>번역 종료';
+    toggleBtn.classList.add('live');
+    bookmarkBtn.disabled = false;
+    statusText.textContent = '녹음 중';
+    timerEl.style.display = 'inline';
+    timerInterval = setInterval(()=>{
+      timerEl.textContent = fmtTime(Date.now() - sessionStart);
+    }, 500);
+
+    try{ recognition.start(); }catch(e){}
+  }
+
+  async function stopSession(){
+    if(!isRecording) return;
+    isRecording = false;
+    try{ recognition.onend = null; recognition.stop(); }catch(e){}
+    if(micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream = null; }
+    clearInterim();
+
+    toggleBtn.innerHTML = '<span class="dot"></span>번역 시작';
+    toggleBtn.classList.remove('live');
+    bookmarkBtn.disabled = true;
+    statusText.textContent = '대기 중';
+    clearInterval(timerInterval);
+
+    await translationChain;
+
+    const fullEn = segments.map(s=>s.en).join(' ');
+    const fullKo = segments.map(s=>s.ko || '').join(' ');
+    fullEnEl.textContent = fullEn || '(인식된 음성이 없습니다)';
+    fullKoEl.textContent = fullKo || '(번역된 내용이 없습니다)';
+    resultsBox.style.display = 'block';
+    summaryKoEl.textContent = '요약 생성 중…';
+
+    const summary = await buildSummary(fullEn);
+    summaryKoEl.textContent = summary || '(요약할 내용이 부족합니다)';
+  }
+
+  toggleBtn.addEventListener('click', ()=>{
+    if(isRecording) stopSession(); else startSession();
+  });
+
+  const STOPWORDS = new Set(['the','a','an','is','are','was','were','be','been','being','to','of','and','in','on','for','with','at','by','from','as','that','this','it','its','i','you','he','she','we','they','them','his','her','their','our','your','so','but','or','if','then','than','which','who','whom','what','when','where','why','how','not','no','do','does','did','have','has','had','will','would','can','could','should','just','about','into','up','out','over','under','again','also','very','really','um','uh']);
+
+  function splitSentences(text){
+    const parts = text.match(/[^.!?]+[.!?]*/g) || [];
+    return parts.map(s=>s.trim()).filter(s=>s.length > 0);
+  }
+
+  function extractiveSummary(text){
+    const sentences = splitSentences(text);
+    if(sentences.length <= 3) return sentences.join(' ');
+
+    const freq = {};
+    sentences.forEach(s=>{
+      s.toLowerCase().replace(/[^a-z0-9'\s]/g,' ').split(/\s+/).forEach(w=>{
+        if(!w || STOPWORDS.has(w)) return;
+        freq[w] = (freq[w]||0) + 1;
+      });
+    });
+
+    const scored = sentences.map((s, idx)=>{
+      const words = s.toLowerCase().replace(/[^a-z0-9'\s]/g,' ').split(/\s+/).filter(Boolean);
+      const score = words.reduce((sum,w)=> sum + (freq[w]||0), 0) / Math.max(words.length, 1);
+      return {idx, s, score};
+    });
+
+    const count = Math.min(6, Math.max(2, Math.ceil(sentences.length * 0.3)));
+    const top = scored.slice().sort((a,b)=>b.score - a.score).slice(0, count);
+    top.sort((a,b)=>a.idx - b.idx);
+    return top.map(t=>t.s).join(' ');
+  }
+
+  async function buildSummary(fullEn){
+    if(!fullEn || !fullEn.trim()) return '';
+    const summaryEn = extractiveSummary(fullEn);
+    const chunks = [];
+    let cur = '';
+    summaryEn.split(' ').forEach(word=>{
+      if((cur + ' ' + word).length > 450){ chunks.push(cur); cur = word; }
+      else { cur = cur ? cur + ' ' + word : word; }
+    });
+    if(cur) chunks.push(cur);
+
+    const translated = [];
+    for(const c of chunks){
+      translated.push(await translateText(c, 'ko'));
+    }
+    return translated.join(' ');
+  }
+
+  function findSegmentsInRange(fromMs, toMs){
+    return segments.filter(s => s.t >= fromMs - 1800 && s.t <= toMs);
+  }
+
+  bookmarkBtn.addEventListener('click', async ()=>{
+    if(!isRecording || !micStream) return;
+    bookmarkBtn.classList.remove('flash'); void bookmarkBtn.offsetWidth; bookmarkBtn.classList.add('flash');
+    showToast('북마크 저장 중… (3초 녹음)');
+
+    const nowMs = Date.now() - sessionStart;
+    const id = ++bmId;
+
+    const emptyMsg = bmList.querySelector('.cue-empty');
+    if(emptyMsg) emptyMsg.remove();
+
+    const card = document.createElement('div');
+    card.className = 'cue-card';
+    card.id = 'bm-' + id;
+    card.innerHTML =
+      '<div class="cue-time mono">' + fmtTime(nowMs) + '</div>' +
+      '<div class="cue-text"><div class="cue-empty">녹음 중…</div></div>' +
+      '<div class="cue-audio"></div>';
+    bmList.prepend(card);
+
+    let chunks = [];
+    let recorder;
+    try{
+      recorder = new MediaRecorder(micStream);
+    }catch(e){
+      card.querySelector('.cue-text').innerHTML = '<div class="cue-empty">녹음을 시작할 수 없습니다.</div>';
+      return;
+    }
+    recorder.ondataavailable = (e)=>{ if(e.data && e.data.size > 0) chunks.push(e.data); };
+    recorder.onstop = async ()=>{
+      const blob = new Blob(chunks, {type: recorder.mimeType || 'audio/webm'});
+      const url = URL.createObjectURL(blob);
+      const audioWrap = card.querySelector('.cue-audio');
+      audioWrap.innerHTML = '<audio controls src="' + url + '"></audio><button class="cue-del" title="삭제">✕</button>';
+      audioWrap.querySelector('.cue-del').addEventListener('click', ()=>{
+        card.remove();
+        if(!bmList.children.length){
+          bmList.innerHTML = '<div class="cue-empty">저장된 북마크가 없습니다. 녹음 중 북마크 버튼을 눌러보세요.</div>';
+        }
+      });
+
+      const related = findSegmentsInRange(nowMs, nowMs + 3000);
+      const enText = related.map(s=>s.en).join(' ') || '(해당 구간에 인식된 텍스트 없음)';
+      const koText = related.map(s=>s.ko || '').join(' ') || '(해당 구간에 번역된 텍스트 없음)';
+      card.querySelector('.cue-text').innerHTML =
+        '<div class="en">' + escapeHtml(enText) + '</div>' +
+        '<div class="ko">' + escapeHtml(koText) + '</div>';
+    };
+
+    recorder.start();
+    setTimeout(()=>{ if(recorder.state !== 'inactive') recorder.stop(); }, 3000);
+  });
+})();
+</script>
+</body>
+</html>
