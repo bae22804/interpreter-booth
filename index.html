@@ -262,6 +262,7 @@
   <div class="note" id="iosNote">
     iPad·iPhone은 Apple 자체 음성 인식 엔진을 사용해 Android보다 인식이 자주 끊기거나 품질이 낮을 수 있습니다. 설정 → 일반 → 키보드에서 "받아쓰기"가 켜져 있는지 확인해주세요.
   </div>
+  <div class="note" id="diagNote" style="display:none;"></div>
 
   <div class="console">
     <button class="transport-btn" id="toggleBtn"><span class="dot"></span>번역 시작</button>
@@ -333,6 +334,12 @@
   const toast = document.getElementById('toast');
   const unsupportedWarn = document.getElementById('unsupportedWarn');
   const iosNote = document.getElementById('iosNote');
+  const diagNote = document.getElementById('diagNote');
+
+  function showDiag(msg){
+    diagNote.textContent = '진단: ' + msg + '  (' + new Date().toLocaleTimeString('ko-KR') + ')';
+    diagNote.style.display = 'block';
+  }
   const hlLegend = document.getElementById('hlLegend');
   const pdfBtn = document.getElementById('pdfBtn');
   const printSheet = document.getElementById('printSheet');
@@ -362,6 +369,7 @@
   let bmId = 0;
   let bookmarkedSegIds = new Set();
   let bookmarks = [];
+  let recognitionStarted = false;
 
   // ---- rolling audio buffer (Web Audio), used so a bookmark can grab the
   // few seconds of audio that already happened *before* the button press ----
@@ -594,24 +602,34 @@
       if(interim) updateInterim(interim);
     };
 
+    recognition.onstart = ()=>{ recognitionStarted = true; };
+
     recognition.onerror = (e)=>{
       console.warn('speech recognition error', e.error);
       if(e.error === 'no-speech' || e.error === 'audio-capture'){ return; }
       if(e.error === 'not-allowed'){
+        showDiag('마이크 권한 거부 (not-allowed)');
         showToast('마이크 권한이 필요합니다.');
         stopSession();
+        return;
       }
+      showDiag('음성 인식 오류 코드: ' + e.error);
+      showToast('음성 인식 오류: ' + e.error);
     };
 
     recognition.onend = ()=>{
       if(isRecording){
-        try{ recognition.start(); }catch(e){}
+        try{ recognition.start(); }catch(e){
+          showDiag('재시작 실패: ' + (e && e.message ? e.message : e));
+        }
       }
     };
   }
 
   function startSession(){
     if(!SpeechRecognition) return;
+    diagNote.style.display = 'none';
+    recognitionStarted = false;
     setupRecognition();
     // start recognition synchronously, inside the click handler's call stack —
     // iOS Safari (which powers every browser on iPad, "Chrome" included) drops
@@ -620,9 +638,16 @@
     try{
       recognition.start();
     }catch(e){
+      showDiag('recognition.start() 실패: ' + (e && (e.name + ': ' + e.message) || e));
       showToast('음성 인식을 시작할 수 없습니다.');
       return;
     }
+
+    setTimeout(()=>{
+      if(isRecording && !recognitionStarted){
+        showDiag('recognition.start() 호출 후 onstart/onresult 응답이 5초간 없습니다. 이 기기의 음성 인식 자체가 막혀있을 가능성이 높습니다 (예: 스크린타임 콘텐츠 제한, 받아쓰기 꺼짐, 구형 iPadOS).');
+      }
+    }, 5000);
 
     isRecording = true;
     sessionStart = Date.now();
