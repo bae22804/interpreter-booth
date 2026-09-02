@@ -372,9 +372,10 @@
   let recognitionStarted = false;
 
   // ---- rolling audio buffer (Web Audio), used so a bookmark can grab the
-  // few seconds of audio that already happened *before* the button press ----
-  const RING_SECONDS = 15;
-  const LOOKBACK_MS = 10000;
+  // couple of seconds of audio that already happened *before* the button press ----
+  const RING_SECONDS = 8;
+  const LOOKBACK_MS = 4000;
+  const BOOKMARK_MAX_WORDS = 6;
   let audioCtx = null, sourceNode = null, processorNode = null, silentGain = null;
   let ringChunks = [];
 
@@ -520,13 +521,8 @@
   }
 
   function renderBookmarkCard(bm){
-    const enText = bm.segList.length ? bm.segList.map(s=>s.en).join(' ') : '(직전에 인식된 음성이 없습니다)';
-    const koParts = bm.segList.filter(s=>s.ko).map(s=>s.ko);
-    const pending = bm.segList.some(s=>s.ko === null);
-    let koText;
-    if(koParts.length) koText = koParts.join(' ') + (pending ? ' …' : '');
-    else koText = pending ? '번역 중…' : (bm.segList.length ? '' : '(직전에 인식된 음성이 없습니다)');
-
+    const enText = bm.phrase || '(직전에 인식된 음성이 없습니다)';
+    const koText = !bm.phrase ? '' : (bm.ko === null ? '번역 중…' : bm.ko);
     const textBox = bm.cardEl && bm.cardEl.querySelector('.cue-text');
     if(textBox){
       textBox.innerHTML = '<div class="en">' + escapeHtml(enText) + '</div><div class="ko">' + escapeHtml(koText) + '</div>';
@@ -561,9 +557,6 @@
       const el = document.getElementById('ko-seg-' + id);
       if(el) el.innerHTML = '<span class="t mono">' + fmtTime(t) + '</span>' + escapeHtml(ko);
       koPanel.scrollTop = koPanel.scrollHeight;
-      bookmarks.forEach(bm=>{
-        if(bm.segList.indexOf(seg) !== -1) renderBookmarkCard(bm);
-      });
     });
   }
 
@@ -769,20 +762,25 @@
     return translated.join(' ');
   }
 
-  // ---- bookmark: capture the sentence(s) just BEFORE the button press,
-  // not audio/text that happens after it ----
-  function getBackwardSegments(nowMs){
-    if(!segments.length) return [];
-    let idx = segments.length - 1;
-    if(segments[idx].t > nowMs + 500) return []; // nothing spoken yet
-    const picked = [segments[idx]];
-    let wordCount = segments[idx].en.split(/\s+/).filter(Boolean).length;
-    while(wordCount < 6 && idx > 0){
-      idx--;
-      picked.unshift(segments[idx]);
-      wordCount += segments[idx].en.split(/\s+/).filter(Boolean).length;
+  // ---- bookmark: capture just the word(s)/short phrase right BEFORE the
+  // button press — not a whole sentence, not audio/text that comes after ----
+  function getBookmarkPhrase(nowMs){
+    let source = '';
+    let parentSeg = null;
+
+    // the words being spoken right now (not yet finalized) are the most
+    // "직전" text there is — prefer that if it's there
+    if(interimEl && interimEl.textContent && interimEl.textContent.trim()){
+      source = interimEl.textContent.trim();
+    } else if(segments.length){
+      const last = segments[segments.length - 1];
+      if(last.t <= nowMs + 800){ source = last.en; parentSeg = last; }
     }
-    return picked;
+    if(!source) return {phrase:'', parentSeg:null};
+
+    const words = source.split(/\s+/).filter(Boolean);
+    const phrase = words.slice(-BOOKMARK_MAX_WORDS).join(' ');
+    return {phrase, parentSeg};
   }
 
   bookmarkBtn.addEventListener('click', ()=>{
@@ -791,10 +789,10 @@
 
     const nowMs = Date.now() - sessionStart;
     const id = ++bmId;
-    const segList = getBackwardSegments(nowMs);
-    const bm = {id, segList, cardEl: null};
+    const {phrase, parentSeg} = getBookmarkPhrase(nowMs);
+    const bm = {id, phrase, ko: null, cardEl: null};
 
-    segList.forEach(markSegBookmarked);
+    if(parentSeg) markSegBookmarked(parentSeg);
 
     const emptyMsg = bmList.querySelector('.cue-empty');
     if(emptyMsg) emptyMsg.remove();
@@ -811,7 +809,14 @@
     bookmarks.push(bm);
     renderBookmarkCard(bm);
 
-    showToast(segList.length ? '북마크 저장됨' : '직전에 인식된 문장이 없습니다');
+    showToast(phrase ? '북마크 저장됨' : '직전에 인식된 음성이 없습니다');
+
+    if(phrase){
+      translateText(phrase, 'ko').then(ko=>{
+        bm.ko = ko;
+        renderBookmarkCard(bm);
+      });
+    }
 
     const audioWrap = card.querySelector('.cue-audio');
     if(micStream){
