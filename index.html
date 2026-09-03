@@ -140,6 +140,18 @@
   }
   .timer .val{color:var(--text); font-weight:600; font-size:16px;}
 
+  .level-meter{display:flex; align-items:center; gap:7px;}
+  .level-label{font-size:12px; color:var(--text-muted);}
+  .level-bar{
+    width:64px; height:8px; border-radius:999px; background:var(--surface-2);
+    border:1px solid var(--border); overflow:hidden;
+  }
+  .level-fill{
+    display:block; height:100%; width:0%; border-radius:999px;
+    background:var(--ko-accent); transition:width .12s linear, background .2s linear;
+  }
+  .level-fill.low{background:var(--live);}
+
   .cue-btn{
     margin-left:auto; display:flex; align-items:center; gap:8px; min-height:48px;
     background:var(--accent-soft); border:1px solid transparent; color:var(--accent-strong);
@@ -267,6 +279,10 @@
   <div class="console">
     <button class="transport-btn" id="toggleBtn"><span class="dot"></span>번역 시작</button>
     <div class="timer"><span id="statusText">대기 중</span><span class="val mono" id="timer" style="display:none;">00:00</span></div>
+    <div class="level-meter" id="levelMeter" style="display:none;" title="입력 신호 세기 — 너무 낮으면 마이크에 더 가까이 말해주세요">
+      <span class="level-label">신호</span>
+      <span class="level-bar"><span class="level-fill" id="levelFill"></span></span>
+    </div>
     <button class="cue-btn" id="bookmarkBtn" disabled title="직전 문장을 북마크로 저장">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 2a2 2 0 0 0-2 2v18l8-5.333L20 22V4a2 2 0 0 0-2-2H6z"/></svg>
       북마크
@@ -341,6 +357,8 @@
     diagNote.style.display = 'block';
   }
   const hlLegend = document.getElementById('hlLegend');
+  const levelMeter = document.getElementById('levelMeter');
+  const levelFill = document.getElementById('levelFill');
   const pdfBtn = document.getElementById('pdfBtn');
   const printSheet = document.getElementById('printSheet');
 
@@ -370,6 +388,9 @@
   let bookmarkedSegIds = new Set();
   let bookmarks = [];
   let recognitionStarted = false;
+  let recognitionActive = false;
+  let abortStreak = 0;
+  let lastAbortAt = 0;
 
   // ---- rolling audio buffer (Web Audio), used so a bookmark can grab the
   // couple of seconds of audio that already happened *before* the button press ----
@@ -388,11 +409,17 @@
       silentGain = audioCtx.createGain();
       silentGain.gain.value = 0;
       processorNode.onaudioprocess = (e)=>{
-        const data = e.inputBuffer.getChannelData(0).slice();
+        const raw = e.inputBuffer.getChannelData(0);
+        const data = raw.slice();
         const nowT = Date.now() - sessionStart;
         ringChunks.push({data, t: nowT, sr: audioCtx.sampleRate});
         const cutoff = nowT - RING_SECONDS * 1000;
         while(ringChunks.length && ringChunks[0].t < cutoff) ringChunks.shift();
+
+        let sumSq = 0;
+        for(let i=0;i<raw.length;i++) sumSq += raw[i]*raw[i];
+        const rms = Math.sqrt(sumSq / raw.length);
+        updateLevelMeter(rms);
       };
       sourceNode.connect(processorNode);
       processorNode.connect(silentGain);
@@ -400,6 +427,14 @@
     }catch(e){
       console.warn('audio ring buffer unavailable', e);
     }
+  }
+
+  function updateLevelMeter(rms){
+    // rough mapping: typical speech at a normal distance sits well above this;
+    // it fades toward red as the signal gets too quiet to recognize reliably
+    const pct = Math.max(0, Math.min(100, Math.round(rms * 400)));
+    levelFill.style.width = pct + '%';
+    levelFill.classList.toggle('low', pct < 12);
   }
 
   function teardownAudioRingBuffer(){
@@ -595,7 +630,7 @@
       if(interim) updateInterim(interim);
     };
 
-    recognition.onstart = ()=>{ recognitionStarted = true; };
+    recognition.onstart = ()=>{ recognitionStarted = true; recognitionActive = true; };
 
     recognition.onerror = (e)=>{
       console.warn('speech recognition error', e.error);
@@ -606,16 +641,30 @@
         stopSession();
         return;
       }
+      if(e.error === 'aborted'){
+        const nowMs = Date.now();
+        if(nowMs - lastAbortAt < 8000) abortStreak++; else abortStreak = 1;
+        lastAbortAt = nowMs;
+        if(abortStreak >= 4){
+          showDiag('음성 인식이 반복적으로 중단(aborted)되고 있습니다 (' + abortStreak + '회). 이 구간의 인식이 누락될 수 있습니다 — 한 번 완전히 종료 후 다시 시작해보세요.');
+          return;
+        }
+      }
       showDiag('음성 인식 오류 코드: ' + e.error);
-      showToast('음성 인식 오류: ' + e.error);
     };
 
     recognition.onend = ()=>{
-      if(isRecording){
+      recognitionActive = false;
+      if(!isRecording) return;
+      // restarting immediately (synchronously, in the same tick as onend) is
+      // what tends to trigger the WebKit "aborted" restart-loop reported on
+      // iPad — a short delay lets the previous session fully tear down first
+      setTimeout(()=>{
+        if(!isRecording || recognitionActive) return;
         try{ recognition.start(); }catch(e){
           showDiag('재시작 실패: ' + (e && e.message ? e.message : e));
         }
-      }
+      }, 300);
     };
   }
 
@@ -623,6 +672,8 @@
     if(!SpeechRecognition) return;
     diagNote.style.display = 'none';
     recognitionStarted = false;
+    recognitionActive = false;
+    abortStreak = 0; lastAbortAt = 0;
     setupRecognition();
     // start recognition synchronously, inside the click handler's call stack —
     // iOS Safari (which powers every browser on iPad, "Chrome" included) drops
@@ -659,10 +710,15 @@
     }, 500);
 
     bookmarkBtn.disabled = true;
-    navigator.mediaDevices.getUserMedia({audio:true}).then(stream=>{
+    navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true }
+    }).then(stream=>{
       micStream = stream;
       setupAudioRingBuffer(stream);
-      if(isRecording) bookmarkBtn.disabled = false;
+      if(isRecording){
+        bookmarkBtn.disabled = false;
+        levelMeter.style.display = 'flex';
+      }
     }).catch(e=>{
       console.warn('mic for bookmark unavailable', e);
       showToast('마이크 접근이 거부되어 북마크는 사용할 수 없습니다. 번역은 계속됩니다.');
@@ -682,6 +738,8 @@
     bookmarkBtn.disabled = true;
     statusText.textContent = '대기 중';
     clearInterval(timerInterval);
+    timerEl.style.display = 'none';
+    levelMeter.style.display = 'none';
 
     await translationChain;
 
