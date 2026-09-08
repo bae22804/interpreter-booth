@@ -112,6 +112,25 @@
     margin-bottom:16px; display:none;
   }
 
+  .engine-box{margin-bottom:16px;}
+  .link-btn{
+    background:none; border:1px solid var(--border); color:var(--text-muted);
+    border-radius:999px; padding:8px 14px; font-size:12.5px; cursor:pointer; font-family:inherit;
+  }
+  .link-btn:hover{border-color:var(--accent); color:var(--accent-strong);}
+  .engine-status{color:var(--text-muted); font-weight:600;}
+  .api-key-panel{
+    margin-top:10px; background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm);
+  }
+  .tiny{font-size:12px; color:var(--text-muted); line-height:1.6; margin:0 0 10px;}
+  .api-key-row{display:flex; gap:8px; flex-wrap:wrap;}
+  .api-key-row input{
+    flex:1; min-width:200px; min-height:40px; border-radius:8px; border:1px solid var(--border);
+    background:var(--surface-2); color:var(--text); padding:0 12px; font-size:14px; font-family:inherit;
+  }
+  .api-key-row .pdf-btn{min-height:40px;}
+
   /* transport console */
   .console{
     background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
@@ -276,6 +295,19 @@
   </div>
   <div class="note" id="diagNote" style="display:none;"></div>
 
+  <div class="engine-box">
+    <button class="link-btn" id="apiKeyToggle">⚙ 음성 인식 엔진 설정 <span id="engineStatus" class="engine-status">(브라우저 기본 엔진)</span></button>
+    <div class="api-key-panel" id="apiKeyPanel" style="display:none;">
+      <p class="tiny">OpenAI API 키를 입력하면 Whisper로 음성을 인식해서, 아이패드를 포함한 모든 기기에서 더 안정적이고 정확하게 동작합니다. 키는 이 브라우저에만 저장되며(localStorage), 공개 코드에는 포함되지 않습니다. 다만 이 모드에서는 음성 오디오가 OpenAI 서버로 전송되며, 사용한 만큼 비용이 청구됩니다.</p>
+      <div class="api-key-row">
+        <input type="password" id="apiKeyInput" placeholder="sk-..." autocomplete="off" spellcheck="false">
+        <button class="pdf-btn" id="apiKeySave">저장</button>
+        <button class="pdf-btn" id="apiKeyClear">삭제</button>
+      </div>
+      <p class="tiny" id="apiKeyMsg"></p>
+    </div>
+  </div>
+
   <div class="console">
     <button class="transport-btn" id="toggleBtn"><span class="dot"></span>번역 시작</button>
     <div class="timer"><span id="statusText">대기 중</span><span class="val mono" id="timer" style="display:none;">00:00</span></div>
@@ -361,11 +393,56 @@
   const levelFill = document.getElementById('levelFill');
   const pdfBtn = document.getElementById('pdfBtn');
   const printSheet = document.getElementById('printSheet');
+  const apiKeyToggle = document.getElementById('apiKeyToggle');
+  const apiKeyPanel = document.getElementById('apiKeyPanel');
+  const apiKeyInput = document.getElementById('apiKeyInput');
+  const apiKeySave = document.getElementById('apiKeySave');
+  const apiKeyClear = document.getElementById('apiKeyClear');
+  const apiKeyMsg = document.getElementById('apiKeyMsg');
+  const engineStatus = document.getElementById('engineStatus');
 
-  if(!SpeechRecognition){
-    unsupportedWarn.style.display = 'block';
-    toggleBtn.disabled = true;
+  function getApiKey(){
+    try{ return (localStorage.getItem('whisperApiKey') || '').trim(); }catch(e){ return ''; }
   }
+  function useWhisper(){ return !!getApiKey(); }
+
+  function refreshEngineAvailability(){
+    if(useWhisper()){
+      engineStatus.textContent = '(Whisper 모드 사용 중)';
+      unsupportedWarn.style.display = 'none';
+      toggleBtn.disabled = false;
+    } else {
+      engineStatus.textContent = '(브라우저 기본 엔진)';
+      if(!SpeechRecognition){
+        unsupportedWarn.style.display = 'block';
+        toggleBtn.disabled = true;
+      } else {
+        unsupportedWarn.style.display = 'none';
+        toggleBtn.disabled = false;
+      }
+    }
+  }
+
+  apiKeyToggle.addEventListener('click', ()=>{
+    const willShow = apiKeyPanel.style.display === 'none';
+    apiKeyPanel.style.display = willShow ? 'block' : 'none';
+    if(willShow) apiKeyInput.value = getApiKey();
+  });
+  apiKeySave.addEventListener('click', ()=>{
+    const val = apiKeyInput.value.trim();
+    if(!val){ apiKeyMsg.textContent = '키를 입력해주세요.'; return; }
+    try{ localStorage.setItem('whisperApiKey', val); }catch(e){}
+    apiKeyMsg.textContent = '저장되었습니다. 다음 "번역 시작"부터 Whisper로 인식합니다.';
+    refreshEngineAvailability();
+  });
+  apiKeyClear.addEventListener('click', ()=>{
+    try{ localStorage.removeItem('whisperApiKey'); }catch(e){}
+    apiKeyInput.value = '';
+    apiKeyMsg.textContent = '삭제되었습니다. 브라우저 기본 엔진으로 돌아갑니다.';
+    refreshEngineAvailability();
+  });
+
+  refreshEngineAvailability();
 
   function isIOSDevice(){
     const ua = navigator.userAgent;
@@ -391,6 +468,98 @@
   let recognitionActive = false;
   let abortStreak = 0;
   let lastAbortAt = 0;
+
+  // ---- Whisper mode: record chunks and send each to OpenAI's transcription
+  // API, instead of relying on the browser's built-in (Apple/Google) speech
+  // engine. Chunk boundaries follow actual pauses in speech (like the browser
+  // engines do) rather than a fixed clock, so sentences don't get cut
+  // mid-way and translated as two disconnected fragments. ----
+  const MIN_CHUNK_MS = 1200;   // don't cut on a tiny sub-second pause
+  const SILENCE_GAP_MS = 550;  // this much continuous quiet counts as "paused"
+  const MAX_CHUNK_MS = 9000;   // force a cut if the speaker never pauses
+  const SILENCE_RMS = 0.03;    // matches the level-meter's "low" threshold
+  let whisperLoopActive = false;
+  let currentChunkRecorder = null;
+  let vadSilenceMs = 0;
+  let vadLastSampleAt = 0;
+
+  function feedVad(rms){
+    const now = Date.now();
+    const dt = vadLastSampleAt ? (now - vadLastSampleAt) : 0;
+    vadLastSampleAt = now;
+    if(rms < SILENCE_RMS) vadSilenceMs += dt; else vadSilenceMs = 0;
+  }
+
+  function stopWhisperLoop(){
+    whisperLoopActive = false;
+    if(currentChunkRecorder && currentChunkRecorder.state !== 'inactive'){
+      try{ currentChunkRecorder.stop(); }catch(e){}
+    }
+    currentChunkRecorder = null;
+  }
+
+  function recordNextChunk(stream){
+    if(!whisperLoopActive) return;
+    let chunks = [];
+    let recorder;
+    try{
+      recorder = new MediaRecorder(stream);
+    }catch(e){
+      showDiag('청크 녹음을 시작할 수 없습니다: ' + (e && e.message ? e.message : e));
+      return;
+    }
+    currentChunkRecorder = recorder;
+    const chunkStartAt = Date.now();
+    vadSilenceMs = 0;
+    vadLastSampleAt = 0;
+
+    const boundaryCheck = setInterval(()=>{
+      if(recorder.state === 'inactive'){ clearInterval(boundaryCheck); return; }
+      const elapsed = Date.now() - chunkStartAt;
+      const pausedLongEnough = elapsed >= MIN_CHUNK_MS && vadSilenceMs >= SILENCE_GAP_MS;
+      if(pausedLongEnough || elapsed >= MAX_CHUNK_MS){
+        clearInterval(boundaryCheck);
+        if(recorder.state !== 'inactive') recorder.stop();
+      }
+    }, 150);
+
+    recorder.ondataavailable = (e)=>{ if(e.data && e.data.size > 0) chunks.push(e.data); };
+    recorder.onstop = ()=>{
+      clearInterval(boundaryCheck);
+      const blob = new Blob(chunks, {type: recorder.mimeType || 'audio/webm'});
+      // start the next chunk immediately so capture stays gapless, without
+      // waiting for this chunk's transcription to come back
+      if(whisperLoopActive) recordNextChunk(stream);
+      if(blob.size > 800) transcribeChunk(blob);
+    };
+    recorder.start();
+  }
+
+  async function transcribeChunk(blob){
+    const key = getApiKey();
+    if(!key) return;
+    try{
+      const form = new FormData();
+      form.append('file', blob, 'chunk.webm');
+      form.append('model', 'whisper-1');
+      form.append('language', 'en');
+      const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + key },
+        body: form
+      });
+      if(!res.ok){
+        const errText = await res.text().catch(()=>'');
+        showDiag('Whisper 오류 ' + res.status + ': ' + errText.slice(0,200));
+        return;
+      }
+      const data = await res.json();
+      const text = (data && data.text || '').trim();
+      if(text) appendFinalSegment(text);
+    }catch(e){
+      showDiag('Whisper 요청 실패: ' + (e && e.message ? e.message : e));
+    }
+  }
 
   // ---- rolling audio buffer (Web Audio), used so a bookmark can grab the
   // couple of seconds of audio that already happened *before* the button press ----
@@ -420,6 +589,7 @@
         for(let i=0;i<raw.length;i++) sumSq += raw[i]*raw[i];
         const rms = Math.sqrt(sumSq / raw.length);
         updateLevelMeter(rms);
+        if(whisperLoopActive) feedVad(rms);
       };
       sourceNode.connect(processorNode);
       processorNode.connect(silentGain);
@@ -668,9 +838,51 @@
     };
   }
 
+  function beginSessionState(){
+    isRecording = true;
+    sessionStart = Date.now();
+    segments = []; translationChain = Promise.resolve();
+    bookmarkedSegIds = new Set();
+    enPanel.innerHTML = ''; koPanel.innerHTML = '';
+    resultsBox.style.display = 'none';
+    hlLegend.style.display = 'none';
+
+    toggleBtn.innerHTML = '<span class="dot"></span>번역 종료';
+    toggleBtn.classList.add('live');
+    statusText.textContent = '녹음 중';
+    timerEl.style.display = 'inline';
+    timerInterval = setInterval(()=>{
+      timerEl.textContent = fmtTime(Date.now() - sessionStart);
+    }, 500);
+  }
+
   function startSession(){
-    if(!SpeechRecognition) return;
+    const viaWhisper = useWhisper();
+    if(!viaWhisper && !SpeechRecognition) return;
     diagNote.style.display = 'none';
+
+    if(viaWhisper){
+      beginSessionState();
+      bookmarkBtn.disabled = true;
+      navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true }
+      }).then(stream=>{
+        micStream = stream;
+        setupAudioRingBuffer(stream);
+        if(isRecording){
+          bookmarkBtn.disabled = false;
+          levelMeter.style.display = 'flex';
+          whisperLoopActive = true;
+          recordNextChunk(stream);
+        }
+      }).catch(e=>{
+        showDiag('마이크 접근 실패: ' + (e && e.message ? e.message : e));
+        showToast('마이크 접근이 거부되었습니다.');
+        stopSession();
+      });
+      return;
+    }
+
     recognitionStarted = false;
     recognitionActive = false;
     abortStreak = 0; lastAbortAt = 0;
@@ -689,25 +901,11 @@
 
     setTimeout(()=>{
       if(isRecording && !recognitionStarted){
-        showDiag('recognition.start() 호출 후 onstart/onresult 응답이 5초간 없습니다. 이 기기의 음성 인식 자체가 막혀있을 가능성이 높습니다 (예: 스크린타임 콘텐츠 제한, 받아쓰기 꺼짐, 구형 iPadOS).');
+        showDiag('recognition.start() 호출 후 onstart/onresult 응답이 5초간 없습니다. 이 기기의 음성 인식 자체가 막혀있을 가능성이 높습니다 (예: 스크린타임 콘텐츠 제한, 받아쓰기 꺼짐, 구형 iPadOS). 상단 "음성 인식 엔진 설정"에서 API 키를 등록하면 이 문제를 우회할 수 있습니다.');
       }
     }, 5000);
 
-    isRecording = true;
-    sessionStart = Date.now();
-    segments = []; translationChain = Promise.resolve();
-    bookmarkedSegIds = new Set();
-    enPanel.innerHTML = ''; koPanel.innerHTML = '';
-    resultsBox.style.display = 'none';
-    hlLegend.style.display = 'none';
-
-    toggleBtn.innerHTML = '<span class="dot"></span>번역 종료';
-    toggleBtn.classList.add('live');
-    statusText.textContent = '녹음 중';
-    timerEl.style.display = 'inline';
-    timerInterval = setInterval(()=>{
-      timerEl.textContent = fmtTime(Date.now() - sessionStart);
-    }, 500);
+    beginSessionState();
 
     bookmarkBtn.disabled = true;
     navigator.mediaDevices.getUserMedia({
@@ -728,7 +926,8 @@
   async function stopSession(){
     if(!isRecording) return;
     isRecording = false;
-    try{ recognition.onend = null; recognition.stop(); }catch(e){}
+    stopWhisperLoop();
+    if(recognition){ try{ recognition.onend = null; recognition.stop(); }catch(e){} }
     teardownAudioRingBuffer();
     if(micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream = null; }
     clearInterim();
